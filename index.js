@@ -7,72 +7,18 @@ const BlockType = Scratch.BlockType;
 const formatMessage = Scratch.formatMessage;
 const log = Scratch.log;
 
+const pin2firmata = pin => {
+    if (pin.startsWith('A')){
+        pin = parseInt(pin[1], 10)+14; // A0 starts with 14
+    } else {
+        pin = parseInt(pin, 10);
+    }
+    return pin;
+}
+
 class ActuatorExtension{
     constructor (runtime){
         this.runtime = runtime;
-        this.comm = runtime.ioDevices.comm;
-        this.session = null;
-        // session callbacks
-        this.onmessage = this.onmessage.bind(this);
-        this.onclose = this.onclose.bind(this);
-
-        this.decoder = new TextDecoder();
-        this.lineBuffer = '';
-    }
-
-    write (data){
-        if (!data.endsWith('\n')) data += '\n';
-        if (this.session) this.session.write(data);
-    }
-
-    report (data){
-        return new Promise(resolve => {
-            this.write(data);
-            this.reporter = resolve;
-        });
-    }
-
-
-    onmessage (data){
-        const dataStr = this.decoder.decode(data);
-        this.lineBuffer += dataStr;
-        if (this.lineBuffer.indexOf('\n') !== -1){
-            const lines = this.lineBuffer.split('\n');
-            this.lineBuffer = lines.pop();
-            for (const l of lines){
-                if (this.reporter) this.reporter(l);
-            }
-        }
-    }
-
-    onclose (){
-        this.session = null;
-    }
-
-    // method required by vm runtime
-    scan (){
-        this.comm.getDeviceList().then(result => {
-            this.runtime.emit(this.runtime.constructor.PERIPHERAL_LIST_UPDATE, result);
-        });
-    }
-
-    connect (id){
-        this.comm.connect(id).then(sess => {
-            this.session = sess;
-            this.session.onmessage = this.onmessage;
-            this.session.onclose = this.onclose;
-            // notify gui connected
-            this.runtime.emit(this.runtime.constructor.PERIPHERAL_CONNECTED);
-        }).catch(err => {
-            log.warn('connect peripheral fail', err);
-        });
-    }
-
-    disconnect (){
-        this.session.close();
-    }
-    isConnected (){
-        return Boolean(this.session);
     }
 
     _buildMenuFromArray (ary){
@@ -110,7 +56,7 @@ class ActuatorExtension{
                             menu: 'digiPin'
                         }
                     },
-                    func: 'noop',
+                    func: 'servoSetup',
                     gen: {
                         arduino: this.servoSetupGen
                     }
@@ -133,7 +79,7 @@ class ActuatorExtension{
                             defaultValue: 90
                         }
                     },
-                    func: 'noop',
+                    func: 'servoWrite',
                     gen: {
                         arduino: this.servoWriteGen
                     }
@@ -324,13 +270,26 @@ class ActuatorExtension{
         };
     }
 
-    noop (){}
+    noop (){
+        return Promise.reject("Unsupport block in online mode")
+    }
+
+    servoSetup (args){
+        const pin = pin2firmata(args.PIN);
+        board.pinMode(pin, board.MODES.SERVO);
+    }
 
     servoSetupGen (gen, block){
         gen.includes_['servo']  = '#include <Servo.h>';
         const pin = gen.valueToCode(block, 'PIN');
         gen.definitions_['servo_'+pin] = `Servo servo_${pin};`;
         gen.setupCodes_['servo_'+pin] = `servo_${pin}.attach(${pin})`;
+    }
+
+    servoWrite (args){
+        const pin = pin2firmata(args.PIN);
+        const deg = parseInt(args.DEG, 10);
+        board.servoWrite(pin, deg);
     }
 
     servoWriteGen (gen, block){
